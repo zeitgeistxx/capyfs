@@ -8,7 +8,7 @@ import (
 
 func main() {
 	tr := p2p.NewTCPTransport(":8000")
-	
+
 	if err := tr.ListenAndAccept(); err != nil {
 		log.Fatal(err)
 	}
