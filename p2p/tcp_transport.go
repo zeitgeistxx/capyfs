@@ -23,26 +23,44 @@ func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 	}
 }
 
+// Close implements the Peer interface, which will close the underlying connection of the peer.
+func (p *TCPPeer) Close() error {
+	return p.conn.Close()
+}
+
+type TCPTransportOpts struct {
+	ListenAddrress string
+	HandshakeFunc  HandshakeFunc
+	Decoder        Decoder
+	OnPeer         func(Peer) error
+}
+
 type TCPTransport struct {
-	listenAddress string
-	listener      net.Listener
-	shakeHands    HandshakeFunc
-	decoder       Decoder
+	TCPTransportOpts
+	listener net.Listener
+	rpcch    chan RPC
 
 	mu    sync.RWMutex
 	peers map[net.Addr]Peer
 }
 
-func NewTCPTransport(listenAddr string) *TCPTransport {
+func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
-		listenAddress: listenAddr,
+		TCPTransportOpts: opts,
+		rpcch:            make(chan RPC),
 	}
+}
+
+// Consume implements the Transport interface, which will return read-only channel
+// for reading the incoming messages received from another peer in the network.
+func (t *TCPTransport) Consume() <-chan RPC {
+	return t.rpcch
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
 	var err error
 
-	t.listener, err = net.Listen("tcp", t.listenAddress)
+	t.listener, err = net.Listen("tcp", t.ListenAddrress)
 	if err != nil {
 		return err
 	}
@@ -65,21 +83,35 @@ func (t *TCPTransport) startAcceptLoop() {
 	}
 }
 
-type Temp struct{}
-
 func (t *TCPTransport) handleConnection(conn net.Conn) {
+	var err error
+
+	defer func() {
+		fmt.Printf("dropping peer connection:  %s", err)
+		conn.Close()
+	}()
+
 	peer := NewTCPPeer(conn, true)
 
-	if err := t.shakeHands(peer); err != nil {
+	if err = t.HandshakeFunc(peer); err != nil {
+		return
+	}
 
+	if t.OnPeer != nil {
+		if err = t.OnPeer(peer); err != nil {
+			return
+		}
 	}
 
 	// Read loop
-	msg := &Temp{}
+	rpc := RPC{}
 	for {
-		if err := t.decoder.Decode(conn, msg); err != nil {
-			fmt.Printf("TCP error: %s\n", err)
-			continue
+		err = t.Decoder.Decode(conn, &rpc)
+		if err != nil {
+			return
 		}
+
+		rpc.From = conn.RemoteAddr()
+		t.rpcch <- rpc
 	}
 }
