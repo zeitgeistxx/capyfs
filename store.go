@@ -81,6 +81,10 @@ func NewStore(opts StoreOpts) *Store {
 	}
 }
 
+func (s *Store) Write(key string, r io.Reader) (int64, error) {
+	return s.writeStream(key, r)
+}
+
 func (s *Store) Read(key string) (io.Reader, error) {
 	f, err := s.readStream(key)
 	if err != nil {
@@ -99,10 +103,7 @@ func (s *Store) Has(key string) bool {
 	absolutePath := fmt.Sprintf("%s/%s", s.Root, pathKey.AbsolutePath())
 
 	_, err := os.Stat(absolutePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return false
-	}
-	return true
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 func (s *Store) Clear() error {
@@ -127,26 +128,24 @@ func (s *Store) readStream(key string) (io.ReadCloser, error) {
 	return os.Open(absolutePath)
 }
 
-func (s *Store) writeStream(key string, r io.Reader) error {
+func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
 	pathKey := s.PathTransformFunc(key)
 	pathNameWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.PathName)
 	if err := os.MkdirAll(pathNameWithRoot, os.ModePerm); err != nil {
-		return err
+		return 0, err
 	}
 
 	absoluteFilePath := fmt.Sprintf("%s/%s", s.Root, pathKey.AbsolutePath())
 
 	f, err := os.Create(absoluteFilePath)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	n, err := io.Copy(f, r)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	log.Printf("written (%d) bytes to disk: %s", n, absoluteFilePath)
-
-	return nil
+	return n, nil
 }
